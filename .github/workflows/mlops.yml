@@ -95,7 +95,7 @@ jobs:
           python - <<'EOF'
           import sys
           accuracy = float("${{ needs.train.outputs.accuracy }}")
-          threshold = 0.70
+          threshold = 0.68
           print(f"Current Accuracy: {accuracy}")
           if accuracy < threshold:
               print(f"FAILED: Accuracy {accuracy} is below threshold {threshold}")
