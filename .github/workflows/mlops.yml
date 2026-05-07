@@ -3,13 +3,6 @@ name: MLOps Pipeline
 on:
   push:
     branches: [main, master]
-    paths:
-      - 'data/**.dvc'
-      - 'src/**.py'
-      - 'tests/**.py'
-      - 'params.yaml'
-      - 'requirements.txt'
-      - '.github/workflows/mlops.yml'
   workflow_dispatch:
 
 jobs:
