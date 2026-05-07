@@ -35,7 +35,12 @@ def train(
     # 2. Dinh nghia danh sach cac model muon thu nghiem
     models_to_try = {
         "random_forest": RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42),
-        "gradient_boosting": GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42),
+        "gradient_boosting": GradientBoostingClassifier(
+            n_estimators=params.get("n_estimators", 100), 
+            max_depth=params.get("max_depth", 5), 
+            learning_rate=params.get("learning_rate", 0.1),
+            random_state=42
+        ),
         "logistic_regression": LogisticRegression(max_iter=1000, random_state=42)
     }
 
