@@ -1,16 +1,29 @@
+# MLflow
 mlflow.db
+mlruns/
 mlartifacts/
+
+# Models & Outputs
 models/
 outputs/
-data/train_phase1.csv
-data/eval.csv
-data/train_phase2.csv
+
+# Data (Original CSVs managed by DVC)
+data/*.csv
+
+# Credentials & Environment
 sa-key.json
 .env
 .venv/
+
+# Python & IDE
 __pycache__/
 *.pyc
+.pytest_cache/
 .DS_Store
+.vscode/
+.idea/
+
+# BMad & Agents
 _bmad/
 _bmad-output/
 .agent/
