@@ -6,7 +6,8 @@ import json
 import joblib
 import os
 from dotenv import load_dotenv
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
 
 load_dotenv()  # Tai cac bien moi truong tu file .env
@@ -20,63 +21,73 @@ def train(
     eval_path: str = "data/eval.csv",
 ) -> float:
     """
-    Huan luyen mo hinh va ghi nhan ket qua vao MLflow.
-
-    Tham so:
-        params     : dict chua cac sieu tham so cho RandomForestClassifier.
-        data_path  : duong dan den file du lieu huan luyen.
-        eval_path  : duong dan den file du lieu danh gia.
-
-    Tra ve:
-        accuracy (float): do chinh xac tren tap danh gia.
+    Tu dong huan luyen nhieu thuat toan va chon ra cai tot nhat.
     """
 
-    # TODO 1: Doc du lieu huan luyen va danh gia
+    # 1. Doc du lieu
     df_train = pd.read_csv(data_path)
     df_eval = pd.read_csv(eval_path)
-
-    # TODO 2: Tach dac trung (X) va nhan (y)
     X_train = df_train.drop(columns=["target"])
     y_train = df_train["target"]
     X_eval = df_eval.drop(columns=["target"])
     y_eval = df_eval["target"]
 
-    with mlflow.start_run():
+    # 2. Dinh nghia danh sach cac model muon thu nghiem
+    models_to_try = {
+        "random_forest": RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42),
+        "gradient_boosting": GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42),
+        "logistic_regression": LogisticRegression(max_iter=1000, random_state=42)
+    }
 
-        # TODO 3: Ghi nhan cac sieu tham so
-        mlflow.log_params(params)
+    best_acc = -1
+    best_model = None
+    best_model_name = ""
+    best_metrics = {}
 
-        # TODO 4: Khoi tao va huan luyen RandomForestClassifier
-        # Goi y: su dung random_state=42 de dam bao tinh tai tao
-        model = RandomForestClassifier(**params, random_state=42)
-        model.fit(X_train, y_train)
+    print("--- Bat dau qua trinh tim kiem model tot nhat ---")
 
-        # TODO 5: Du doan tren tap danh gia va tinh chi so
-        preds = model.predict(X_eval)
-        acc = accuracy_score(y_eval, preds)
-        f1 = f1_score(y_eval, preds, average="weighted")
+    for name, model in models_to_try.items():
+        with mlflow.start_run(run_name=f"Trial: {name}"):
+            # Huan luyen
+            model.fit(X_train, y_train)
+            
+            # Danh gia
+            preds = model.predict(X_eval)
+            acc = accuracy_score(y_eval, preds)
+            f1 = f1_score(y_eval, preds, average="weighted")
+            
+            # Log len MLflow
+            mlflow.log_param("model_family", name)
+            mlflow.log_metrics({"accuracy": acc, "f1_score": f1})
+            
+            print(f"Algorithm: {name:20} | Accuracy: {acc:.4f}")
 
-        # TODO 6: Ghi nhan chi so vao MLflow
-        mlflow.log_metric("accuracy", acc)
-        mlflow.log_metric("f1_score", f1)
-        mlflow.sklearn.log_model(model, "model")
+            # Cap nhat model tot nhat
+            if acc > best_acc:
+                best_acc = acc
+                best_model = model
+                best_model_name = name
+                best_metrics = {"accuracy": acc, "f1_score": f1}
 
-        # TODO 7: In ket qua ra man hinh
-        print(f"Accuracy: {acc:.4f} | F1: {f1:.4f}")
+    print(f"\n===> KET QUA: '{best_model_name}' la model tot nhat voi Accuracy: {best_acc:.4f}")
 
-        # TODO 8: Luu metrics ra file outputs/metrics.json
-        # File nay duoc doc boi GitHub Actions o Buoc 2
-        os.makedirs("outputs", exist_ok=True)
-        with open("outputs/metrics.json", "w") as f:
-            json.dump({"accuracy": acc, "f1_score": f1}, f)
+    # 3. Luu "Nha vo dich"
+    # Luu metrics
+    os.makedirs("outputs", exist_ok=True)
+    with open("outputs/metrics.json", "w") as f:
+        json.dump(best_metrics, f)
 
-        # TODO 9: Luu mo hinh ra file models/model.pkl
-        # File nay duoc upload len GCS o Buoc 2
-        os.makedirs("models", exist_ok=True)
-        joblib.dump(model, "models/model.pkl")
+    # Luu model binary
+    os.makedirs("models", exist_ok=True)
+    joblib.dump(best_model, "models/model.pkl")
+    
+    # Log model tot nhat vao mot run tong hop
+    with mlflow.start_run(run_name=f"Best Model: {best_model_name}"):
+        mlflow.log_param("best_algorithm", best_model_name)
+        mlflow.log_metrics(best_metrics)
+        mlflow.sklearn.log_model(best_model, "best_model")
 
-    # TODO 10: Tra ve acc
-    return acc
+    return best_acc
 
 
 if __name__ == "__main__":
