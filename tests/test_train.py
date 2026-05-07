@@ -2,7 +2,12 @@ import os
 import json
 import numpy as np
 import pandas as pd
+import mlflow
 from src.train import train
+
+# Cau hinh MLflow de dung database tam thoi khi chay test
+def setup_module(module):
+    mlflow.set_tracking_uri("sqlite:///:memory:")
 
 
 FEATURE_NAMES = [
