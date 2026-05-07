@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+from scipy.stats import ks_2samp
 
 load_dotenv()  # Tai cac bien moi truong tu file .env
 
@@ -103,9 +104,33 @@ def train(
     os.makedirs("models", exist_ok=True)
     joblib.dump(best_model, "models/model.pkl")
     
+    # --- MO RONG: Kiem tra Data Drift (Bonus 5) ---
+    drift_report = []
+    # Chia doi tap train de so sanh Phase 1 va Phase 2
+    mid_point = len(df_train) // 2
+    df_p1 = df_train.iloc[:mid_point]
+    df_p2 = df_train.iloc[mid_point:]
+    
+    for col in X_train.columns:
+        stat, p_value = ks_2samp(df_p1[col], df_p2[col])
+        if p_value < 0.05:
+            drift_report.append(f"Cảnh báo: Phát hiện Drift tại cột '{col}' (p-value: {p_value:.4f})")
+    
+    with open("outputs/report.txt", "a") as f:
+        f.write("\n--- Data Drift Analysis ---\n")
+        if not drift_report:
+            f.write("Khong phat hien lech lac du lieu dang ke.\n")
+        else:
+            for line in drift_report:
+                f.write(line + "\n")
+                print(line)
+    # ---------------------------------------------
+
     # Log model tot nhat vao mot run tong hop
     with mlflow.start_run(run_name=f"Best Model: {best_model_name}"):
         mlflow.log_param("best_algorithm", best_model_name)
+        if drift_report:
+            mlflow.log_param("data_drift_detected", "True")
         mlflow.log_metrics(best_metrics)
         mlflow.sklearn.log_model(best_model, "best_model")
 
