@@ -116,6 +116,15 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
+            # Di chuyen vao thu muc project (neu co) hoac dam bao moi truong
+            # Cai dat/Cap nhat dependencies de tranh loi thieu thu vien
+            pip install --user -r requirements.txt || echo "Warning: pip install failed"
+            
+            # Restart service
             sudo systemctl restart mlops-serve
-            sleep 5
-            curl -f http://localhost:8000/health || exit 1
+            
+            # Doi server khoi dong (tang len 10s vi phai tai mo hinh tu GCS)
+            sleep 10
+            
+            # Kiem tra health check, neu loi thi in log ra de debug
+            curl -f http://localhost:8000/health || (sudo journalctl -u mlops-serve -n 50 --no-pager && exit 1)
