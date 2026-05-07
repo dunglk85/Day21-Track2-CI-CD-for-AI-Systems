@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 
 load_dotenv()  # Tai cac bien moi truong tu file .env
 
@@ -81,6 +81,23 @@ def train(
     os.makedirs("outputs", exist_ok=True)
     with open("outputs/metrics.json", "w") as f:
         json.dump(best_metrics, f)
+
+    # --- MO RONG: Tao bao cao chi tiet (Bonus 3) ---
+    best_preds = best_model.predict(X_eval)
+    report = classification_report(y_eval, best_preds)
+    matrix = confusion_matrix(y_eval, best_preds)
+    
+    with open("outputs/report.txt", "w") as f:
+        f.write("=== KET QUA HUAN LUYEN CHI TIET ===\n")
+        f.write(f"Best Model: {best_model_name}\n")
+        f.write(f"Accuracy: {best_acc:.4f}\n\n")
+        f.write("--- Classification Report ---\n")
+        f.write(report)
+        f.write("\n--- Confusion Matrix ---\n")
+        f.write(str(matrix))
+    
+    print(f"Da tao bao cao chi tiet tai: outputs/report.txt")
+    # ---------------------------------------------
 
     # Luu model binary
     os.makedirs("models", exist_ok=True)

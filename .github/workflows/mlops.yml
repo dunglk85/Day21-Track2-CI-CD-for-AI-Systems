@@ -85,8 +85,13 @@ jobs:
       - name: Save metrics as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: metrics
-          path: outputs/metrics.json
+          name: performance-reports
+          path: |
+            outputs/metrics.json
+            outputs/report.txt
+
+      - name: Display Performance Report
+        run: cat outputs/report.txt
 
   # JOB 3: Kiem tra chat luong - chi cho phep deploy khi accuracy >= 0.70
   eval:
