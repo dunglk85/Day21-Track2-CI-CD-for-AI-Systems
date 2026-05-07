@@ -1,0 +1,6 @@
+[core]
+    no_scm = True
+    remote = myremote
+['remote "myremote"']
+    url = gs://mlops-lab-ai-lab-16-gcp-2a202600100/dvc
+    credentialpath = ../sa-key.json
