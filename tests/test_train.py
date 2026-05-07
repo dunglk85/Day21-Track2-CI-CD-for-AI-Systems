@@ -5,9 +5,12 @@ import pandas as pd
 import mlflow
 from src.train import train
 
-# Cau hinh MLflow de dung database tam thoi khi chay test
-def setup_module(module):
-    mlflow.set_tracking_uri("sqlite:///:memory:")
+# Cau hinh MLflow de dung file tam thoi khi chay test
+@pytest.fixture(autouse=True)
+def setup_mlflow(tmp_path):
+    tracking_uri = f"file:///{tmp_path}/mlruns"
+    mlflow.set_tracking_uri(tracking_uri)
+    yield
 
 
 FEATURE_NAMES = [
