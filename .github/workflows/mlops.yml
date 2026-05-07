@@ -98,18 +98,68 @@ jobs:
     name: Eval
     needs: train
     runs-on: ubuntu-latest
+    env:
+      MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
     steps:
-      - name: Check eval gate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      
+      - name: Install MLflow for comparison
+        run: pip install mlflow
+
+      - name: Check safety gate (Comparison with Prod)
         run: |
           python - <<'EOF'
           import sys
-          accuracy = float("${{ needs.train.outputs.accuracy }}")
+          import mlflow
+          import os
+          
+          current_acc = float("${{ needs.train.outputs.accuracy }}")
           threshold = 0.7
-          print(f"Current Accuracy: {accuracy}")
-          if accuracy < threshold:
-              print(f"FAILED: Accuracy {accuracy} is below threshold {threshold}")
+          
+          print(f"New Model Accuracy: {current_acc}")
+          
+          # 1. Kiem tra nguong cung
+          if current_acc < threshold:
+              print(f"FAILED: Accuracy {current_acc} is below global threshold {threshold}")
               sys.exit(1)
-          print("PASSED: Accuracy meets threshold.")
+          
+          # 2. So sanh voi mo hinh cu tren DagsHub
+          try:
+              mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
+              client = mlflow.tracking.MlflowClient()
+              
+              # Tim experiment Default (id '0')
+              experiment_id = "0" 
+              runs = client.search_runs(
+                  experiment_ids=[experiment_id],
+                  filter_string="status = 'FINISHED'",
+                  max_results=10,
+                  order_by=["start_time DESC"]
+              )
+              
+              # Tim accuracy cua lan chay thanh cong truoc do (bo qua lan chay hien tai)
+              # Gia dinh lan chay hien tai la runs[0]
+              prev_acc = 0.0
+              if len(runs) > 1:
+                  for run in runs[1:]:
+                      if "accuracy" in run.data.metrics:
+                          prev_acc = run.data.metrics["accuracy"]
+                          print(f"Current Production Accuracy: {prev_acc}")
+                          break
+              
+              if current_acc < prev_acc:
+                  print(f"FAILED: New model ({current_acc}) is WORSE than production ({prev_acc}). Rollback triggered!")
+                  sys.exit(1)
+              
+              print(f"PASSED: New model is better or equal to production.")
+              
+          except Exception as e:
+              print(f"Warning: Could not fetch previous metrics from MLflow: {e}")
+              print("Proceeding with global threshold check only.")
           EOF
 
   # JOB 4: Trien khai sau khi eval gate qua
