@@ -29,6 +29,15 @@ def train(
     df_train = pd.read_csv(data_path)
     df_eval = pd.read_csv(eval_path)
     X_train = df_train.drop(columns=["target"])
+
+    # Dat artifact location de tranh loi proxy mlflow-artifacts voi sqlite:///
+    client = mlflow.tracking.MlflowClient()
+    artifact_root = "file:///" + os.path.abspath("model_artifacts").replace(os.sep, "/")
+    exp_name = "wine_quality"
+    exp = client.get_experiment_by_name(exp_name)
+    if exp is None:
+        client.create_experiment(exp_name, artifact_location=artifact_root)
+    mlflow.set_experiment(exp_name)
     y_train = df_train["target"]
     X_eval = df_eval.drop(columns=["target"])
     y_eval = df_eval["target"]

@@ -27,3 +27,4 @@ __pycache__/
 _bmad/
 _bmad-output/
 .agent/
+model_artifacts/
