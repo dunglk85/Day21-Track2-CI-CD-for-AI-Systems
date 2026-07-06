@@ -21,7 +21,7 @@ def build_suite() -> "gx.ExpectationSuite":
     # --- Schema / ton tai cot ---
     suite.add_expectation(
         gx.expectations.ExpectTableColumnsToMatchSet(
-            column_set=["fixed acidity", "volatile acidity", "citric acid", "residual sugar", "chlorides", "free sulfur dioxide", "total sulfur dioxide", "density", "pH", "sulphates", "alcohol", "wine_type", "target"],
+            column_set=["fixed_acidity", "volatile_acidity", "citric_acid", "residual_sugar", "chlorides", "free_sulfur_dioxide", "total_sulfur_dioxide", "density", "pH", "sulphates", "alcohol", "wine_type", "target"],
             exact_match=True,  
         )
     )
@@ -32,7 +32,7 @@ def build_suite() -> "gx.ExpectationSuite":
     )
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToNotBeNull(
-            column="fixed acidity", mostly=0.95  
+            column="fixed_acidity", mostly=0.95  
         )
     )
 

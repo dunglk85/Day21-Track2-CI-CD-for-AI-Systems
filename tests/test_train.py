@@ -57,7 +57,11 @@ def test_train_returns_float(tmp_path):
 
     # TODO 6: Goi ham train() voi sieu tham so nho (n_estimators=10, max_depth=3)
     acc = train(
-        {"n_estimators": 10, "max_depth": 3},
+        {
+            "random_forest": {"n_estimators": 10, "max_depth": 3},
+            "gradient_boosting": {"n_estimators": 10, "max_depth": 3},
+            "logistic_regression": {"max_iter": 1000},
+        },
         data_path=train_path,
         eval_path=eval_path
     )
@@ -71,7 +75,11 @@ def test_metrics_file_created(tmp_path):
     """Kiem tra file outputs/metrics.json duoc tao sau khi huan luyen."""
     train_path, eval_path = _make_temp_data(tmp_path)
     train(
-        {"n_estimators": 10, "max_depth": 3},
+        {
+            "random_forest": {"n_estimators": 10, "max_depth": 3},
+            "gradient_boosting": {"n_estimators": 10, "max_depth": 3},
+            "logistic_regression": {"max_iter": 1000},
+        },
         data_path=train_path,
         eval_path=eval_path,
     )
@@ -88,7 +96,11 @@ def test_model_file_created(tmp_path):
     """Kiem tra file models/model.pkl duoc tao sau khi huan luyen."""
     train_path, eval_path = _make_temp_data(tmp_path)
     train(
-        {"n_estimators": 10, "max_depth": 3},
+        {
+            "random_forest": {"n_estimators": 10, "max_depth": 3},
+            "gradient_boosting": {"n_estimators": 10, "max_depth": 3},
+            "logistic_regression": {"max_iter": 1000},
+        },
         data_path=train_path,
         eval_path=eval_path,
     )

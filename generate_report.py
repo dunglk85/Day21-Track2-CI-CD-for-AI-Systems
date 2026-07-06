@@ -136,10 +136,10 @@ def main() -> None:
         f.write("\n".join(report_lines))
     print(f"\nDa ghi bao cao vao {REPORT_PATH}")
 
-    # --- Gop tat ca vao outputs/metrics.json ---
+    # --- Gop tat ca vao outputs/metrics.json (khong ghi de metrics goc tu train.py) ---
     metrics = load_existing_metrics()
-    metrics["accuracy"] = round(float(acc), 4)
-    metrics["f1_score"] = round(float(f1_macro), 4)
+    metrics["report_accuracy"] = round(float(acc), 4)
+    metrics["report_f1_score"] = round(float(f1_macro), 4)
     metrics["precision_recall_per_class"] = per_class_metrics
     if distribution:
         metrics["class_distribution"] = distribution.get("class_distribution", {})
@@ -147,7 +147,7 @@ def main() -> None:
 
     with open(METRICS_PATH, "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"Da cap nhat {METRICS_PATH} voi f1_score, precision/recall, class_distribution")
+    print(f"Da cap nhat {METRICS_PATH} voi report_accuracy, report_f1_score, precision/recall, class_distribution")
 
 
 if __name__ == "__main__":

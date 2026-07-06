@@ -7,8 +7,8 @@ import uvicorn
 
 app = FastAPI()
 
-# Doc cau hinh tu bien moi truong
-GCS_BUCKET = os.environ.get("GCS_BUCKET", "mlops-lab-ai-lab-16-gcp-2a202600100")
+# Doc cau hinh tu bien moi truong (fail fast neu thieu)
+GCS_BUCKET = os.environ["GCS_BUCKET"]
 GCS_MODEL_KEY = "models/latest/model.pkl"
 MODEL_PATH = os.path.expanduser("~/models/model.pkl")
 
@@ -26,13 +26,11 @@ def download_model():
         print(f"Tai mo hinh thanh cong ve: {MODEL_PATH}")
     except Exception as e:
         print(f"Loi khi tai mo hinh: {e}")
-        # Trong moi truong dev cuc bo, neu khong co GCS thi bo qua de server van chay duoc
         if not os.path.exists(MODEL_PATH):
              print("Canh bao: Khong tim thay mo hinh tai local.")
 
 # Goi ham tai mo hinh khi khoi dong
-if os.environ.get("GCS_BUCKET"): # Chi tai khi co cau hinh bucket (moi truong deploy)
-    download_model()
+download_model()
 
 # Load mo hinh vao bo nho
 if os.path.exists(MODEL_PATH):

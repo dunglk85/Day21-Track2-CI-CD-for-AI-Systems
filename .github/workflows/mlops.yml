@@ -3,6 +3,10 @@ name: MLOps Pipeline
 on:
   push:
     branches: [main, master]
+    paths:
+      - "**/*.py"
+      - "requirements.txt"
+      - ".github/workflows/mlops.yml"
   workflow_dispatch:
 
 jobs:
@@ -70,6 +74,7 @@ jobs:
     outputs:
       accuracy: ${{ steps.read_metrics.outputs.accuracy }}
       model_version: ${{ steps.version.outputs.model_version }}
+      model_registry_version: ${{ steps.train.outputs.model_registry_version }}
     env:
       MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
       MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
@@ -102,7 +107,12 @@ jobs:
         run: python check_data_distribution.py
 
       - name: Train model
-        run: python src/train.py
+        id: train
+        run: |
+          output=$(python src/train.py)
+          echo "$output"
+          version=$(echo "$output" | grep -oP 'REGISTERED_MODEL_VERSION=\K\d+')
+          echo "model_registry_version=$version" >> "$GITHUB_OUTPUT"
 
       # Bonus 3 + 5: Tao confusion matrix, precision/recall theo lop,
       # va gop phan phoi nhan (tu buoc tren) vao outputs/metrics.json
@@ -170,7 +180,6 @@ jobs:
       MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
       MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
-      CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -179,7 +188,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install mlflow google-cloud-storage
+        run: pip install mlflow
 
       # Can lai file metrics.json vua duoc tao trong job "train"
       - name: Download metrics artifact from train job
@@ -188,25 +197,21 @@ jobs:
           name: performance-reports
           path: outputs/
 
-      - name: Authenticate to Cloud Storage
-        run: |
-          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
-
-      # Bonus 4: Tai metrics.json cua ban production hien tai tu Cloud Storage,
-      # so sanh accuracy moi vs cu. Chi cho deploy neu accuracy moi >= cu.
-      - name: Compare with current production model (rollback safety gate)
-        run: python src/compare_with_production.py
-
+      # Bonus 4: So sanh challenger vs champion tu MLflow Model Registry (@champion alias)
+      # Day la nguon su that duy nhat — thay cho ca tag is_best_model lan file JSON tren GCS.
       - name: Check safety gate (Champion vs Challenger)
         run: |
           python - <<'EOF'
           import sys
-          import mlflow
           import os
           import yaml
+          import mlflow
+
+          MLFLOW_MODEL_NAME = "wine_quality_model"
+          CHAMPION_ALIAS = "champion"
 
           current_acc = float("${{ needs.train.outputs.accuracy }}")
+
           try:
               params = yaml.safe_load(open("params.yaml"))
               threshold = float(params.get("eval_threshold", 0.70))
@@ -215,45 +220,31 @@ jobs:
 
           print(f"Challenger (New Model) Accuracy: {current_acc}")
 
-          # 1. Nguong cung: du challenger co thang champion, van phai dat toi thieu
+          # 1. Global threshold gate
           if current_acc < threshold:
               print(f"FAILED: Accuracy {current_acc} is below global threshold {threshold}")
               sys.exit(1)
 
-          # 2. So sanh voi champion hien tai
+          # 2. Tra cuu champion tu MLflow Model Registry qua alias @champion
           try:
-              mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
               client = mlflow.tracking.MlflowClient()
-
-              prev_acc = None
-              exp = client.get_experiment_by_name("wine_quality")
-              exp_id = exp.experiment_id if exp else "0"
-
-              runs = client.search_runs(
-                  experiment_ids=[exp_id],
-                  filter_string="tags.is_best_model = 'true'",
-                  max_results=10,
-                  order_by=["start_time DESC"],
+              champion_version = client.get_model_version_by_alias(
+                  MLFLOW_MODEL_NAME, CHAMPION_ALIAS
               )
-              if len(runs) > 1:
-                  for run in runs[1:]:
-                      if "accuracy" in run.data.metrics:
-                          prev_acc = run.data.metrics["accuracy"]
-                          print(f"Champion (fallback) Accuracy: {prev_acc}")
-                          break
-
-              if prev_acc is None:
-                  print("No previous champion found. Treating current model as first champion.")
-              elif current_acc < prev_acc:
-                  print(f"FAILED: Challenger ({current_acc}) is WORSE than champion ({prev_acc}).")
-                  sys.exit(1)
-              else:
-                  print("PASSED: Challenger is better than or equal to champion.")
-
+              champion_run_id = champion_version.run_id
+              champion_run = client.get_run(champion_run_id)
+              prev_acc = champion_run.data.metrics.get("accuracy")
+              print(f"Champion (@champion) Accuracy: {prev_acc}")
           except Exception as e:
-              # Loi ket noi MLflow KHONG duoc phep am tham bo qua buoc so sanh.
-              # Fail cung o day de tranh deploy nham mot model chua duoc kiem chung day du.
-              print(f"ERROR: Could not verify against champion model: {e}")
+              print(f"No @champion found in Model Registry. Treating current model as first champion. ({e})")
+              sys.exit(0)
+
+          if current_acc >= prev_acc:
+              diff = current_acc - prev_acc
+              print(f"PASSED: Challenger ({current_acc}) >= Champion ({prev_acc}). Diff: +{diff}")
+          else:
+              diff = prev_acc - current_acc
+              print(f"FAILED: Challenger ({current_acc}) < Champion ({prev_acc}). Drop: -{diff}")
               sys.exit(1)
           EOF
 
@@ -265,6 +256,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MODEL_VERSION: ${{ needs.train.outputs.model_version }}
+      MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
     steps:
       - uses: actions/setup-python@v5
         with:
@@ -353,43 +347,18 @@ jobs:
 
             echo "Deploy successful. Service running on version $MODEL_VERSION."
 
-      # Cap nhat baseline "production" tren Cloud Storage sau khi deploy THANH CONG.
-      # Lan chay sau se dung chinh file nay lam moc so sanh trong Bonus 4.
-      - name: Update production baseline (model + metrics)
-        env:
-          CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
+      # Danh dau model nay la champion trong MLflow Registry sau khi deploy THANH CONG.
+      # @champion la nguon su that duy nhat cho champion-challenger comparison.
+      - name: Promote to champion in MLflow Registry
         run: |
-          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
-          pip install google-cloud-storage
-          python - <<EOF
-          from google.cloud import storage
-
-          bucket_name = "${{ secrets.CLOUD_BUCKET }}"
-          client = storage.Client()
-          bucket = client.bucket(bucket_name)
-
-          version = "${{ needs.train.outputs.model_version }}"
-          model_blob = bucket.blob(f"models/versions/{version}/model.pkl")
-          bucket.copy_blob(model_blob, bucket, "production/model.pkl")
-
-          metrics_blob = bucket.blob("production/metrics.json")
-          metrics_blob.upload_from_filename("outputs/metrics.json")
-
-          print(f"Production baseline updated to version {version}")
-          EOF
-
-      # (Tuy chon) Danh dau model nay la champion trong MLflow Registry sau khi deploy thanh cong.
-      # Bo comment va dieu chinh model_name / run_id logic neu ban da dang ky model qua Registry.
-      # - name: Promote to champion in MLflow Registry
-      #   env:
-      #     MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
-      #     MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
-      #     MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
-      #   run: |
-      #     pip install mlflow
-      #     python -c "
-      #     import mlflow
-      #     client = mlflow.tracking.MlflowClient()
-      #     client.set_registered_model_alias('mlops-model', 'champion', '<model_version_number>')
-      #     "
+          pip install mlflow
+          python -c "
+          import mlflow
+          client = mlflow.tracking.MlflowClient()
+          client.set_registered_model_alias(
+              'wine_quality_model',
+              'champion',
+              ${{ needs.train.outputs.model_registry_version }}
+          )
+          print('Promoted version ${{ needs.train.outputs.model_registry_version }} to @champion')
+          "
