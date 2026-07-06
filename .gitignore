@@ -28,3 +28,4 @@ _bmad/
 _bmad-output/
 .agent/
 model_artifacts/
+.dvc/tmp/
