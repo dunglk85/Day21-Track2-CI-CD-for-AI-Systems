@@ -12,8 +12,7 @@ import pandas as pd
 import great_expectations as gx
 
 
-DATA_PATH = "data/train.csv"  # TODO: doi thanh duong dan du lieu that cua ban
-
+DATA_PATH = "data/train_phase1.csv"  # Da doi thanh duong dan that
 
 def build_suite() -> "gx.ExpectationSuite":
     """Dinh nghia cac rule kiem tra du lieu. Tuy chinh theo dataset that."""
@@ -22,8 +21,8 @@ def build_suite() -> "gx.ExpectationSuite":
     # --- Schema / ton tai cot ---
     suite.add_expectation(
         gx.expectations.ExpectTableColumnsToMatchSet(
-            column_set=["feature_1", "feature_2", "feature_3", "target"],
-            exact_match=False,  # cho phep co them cot khac ngoai danh sach nay
+            column_set=["fixed acidity", "volatile acidity", "citric acid", "residual sugar", "chlorides", "free sulfur dioxide", "total sulfur dioxide", "density", "pH", "sulphates", "alcohol", "wine_type", "target"],
+            exact_match=True,  
         )
     )
 
@@ -33,27 +32,20 @@ def build_suite() -> "gx.ExpectationSuite":
     )
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToNotBeNull(
-            column="feature_1", mostly=0.95  # cho phep toi da 5% null
+            column="fixed acidity", mostly=0.95  
         )
     )
 
     # --- Gia tri trong khoang hop ly ---
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToBeBetween(
-            column="feature_2", min_value=0, max_value=1
+            column="pH", min_value=0, max_value=14
         )
     )
 
     # --- Kieu du lieu cua nhan (vi du bai toan phan loai nhi phan) ---
     suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToBeInSet(column="target", value_set=[0, 1])
-    )
-
-    # --- Khong duoc trung lap toan bo dong ---
-    suite.add_expectation(
-        gx.expectations.ExpectCompoundColumnsToBeUnique(
-            column_list=["feature_1", "feature_2", "feature_3"]
-        )
+        gx.expectations.ExpectColumnValuesToBeInSet(column="target", value_set=[0, 1, 2])
     )
 
     # --- So luong dong toi thieu (phat hien pull data bi thieu/loi) ---

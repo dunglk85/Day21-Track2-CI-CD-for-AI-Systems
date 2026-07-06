@@ -1,4 +1,14 @@
 model_type: "gradient_boosting"
-n_estimators: 300
-max_depth: 10
-learning_rate: 0.1
+eval_threshold: 0.70
+
+random_forest:
+  n_estimators: 150
+  max_depth: 15
+
+gradient_boosting:
+  n_estimators: 300
+  max_depth: 10
+  learning_rate: 0.1
+
+logistic_regression:
+  max_iter: 1500

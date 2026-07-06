@@ -53,7 +53,7 @@ jobs:
           dvc pull
 
       - name: Run Great Expectations validation
-        run: python src/validate_data.py
+        run: python validate_data.py
 
       - name: Upload validation report
         if: always()
@@ -99,7 +99,7 @@ jobs:
 
       # Bonus 5: Canh bao lech lac du lieu - chay TRUOC khi train
       - name: Check data distribution (imbalance warning)
-        run: python src/check_data_distribution.py
+        run: python check_data_distribution.py
 
       - name: Train model
         run: python src/train.py
@@ -107,7 +107,7 @@ jobs:
       # Bonus 3 + 5: Tao confusion matrix, precision/recall theo lop,
       # va gop phan phoi nhan (tu buoc tren) vao outputs/metrics.json
       - name: Generate performance report
-        run: python src/generate_report.py
+        run: python generate_report.py
 
       - name: Read metrics
         id: read_metrics
@@ -204,9 +204,14 @@ jobs:
           import sys
           import mlflow
           import os
+          import yaml
 
           current_acc = float("${{ needs.train.outputs.accuracy }}")
-          threshold = 0.7
+          try:
+              params = yaml.safe_load(open("params.yaml"))
+              threshold = float(params.get("eval_threshold", 0.70))
+          except Exception:
+              threshold = 0.70
 
           print(f"Challenger (New Model) Accuracy: {current_acc}")
 
@@ -216,36 +221,26 @@ jobs:
               sys.exit(1)
 
           # 2. So sanh voi champion hien tai
-          # Uu tien dung Model Registry alias '@champion' neu co, vi day la nguon
-          # tin cay chinh xac hon la suy doan theo start_time cua cac run.
           try:
               mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
               client = mlflow.tracking.MlflowClient()
 
               prev_acc = None
-              model_name = "mlops-model"  # doi lai dung ten model da dang ky trong Registry
+              exp = client.get_experiment_by_name("wine_quality")
+              exp_id = exp.experiment_id if exp else "0"
 
-              try:
-                  champion_version = client.get_model_version_by_alias(model_name, "champion")
-                  champion_run = client.get_run(champion_version.run_id)
-                  prev_acc = champion_run.data.metrics.get("accuracy")
-                  print(f"Champion (Registry alias) Accuracy: {prev_acc}")
-              except Exception:
-                  # Fallback: registry chua co alias 'champion' duoc thiet lap.
-                  # Suy doan tu run gan nhat (kem chinh xac hon, chi dung khi thieu registry).
-                  print("No '@champion' alias found in Registry, falling back to run history.")
-                  runs = client.search_runs(
-                      experiment_ids=["0"],
-                      filter_string="status = 'FINISHED'",
-                      max_results=10,
-                      order_by=["start_time DESC"],
-                  )
-                  if len(runs) > 1:
-                      for run in runs[1:]:
-                          if "accuracy" in run.data.metrics:
-                              prev_acc = run.data.metrics["accuracy"]
-                              print(f"Champion (fallback) Accuracy: {prev_acc}")
-                              break
+              runs = client.search_runs(
+                  experiment_ids=[exp_id],
+                  filter_string="tags.is_best_model = 'true'",
+                  max_results=10,
+                  order_by=["start_time DESC"],
+              )
+              if len(runs) > 1:
+                  for run in runs[1:]:
+                      if "accuracy" in run.data.metrics:
+                          prev_acc = run.data.metrics["accuracy"]
+                          print(f"Champion (fallback) Accuracy: {prev_acc}")
+                          break
 
               if prev_acc is None:
                   print("No previous champion found. Treating current model as first champion.")
@@ -288,9 +283,12 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          envs: MODEL_VERSION
+          envs: MODEL_VERSION, CLOUD_CREDENTIALS
           script: |
             set -e
+
+            echo "$CLOUD_CREDENTIALS" > /tmp/sa-key.json
+            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json
 
             APP_DIR="/opt/mlops-serve"
             MODEL_DIR="$APP_DIR/models"
@@ -322,7 +320,17 @@ jobs:
             sleep 10
 
             # 6. Health check - neu fail thi tu dong rollback ve version cu
-            if ! curl -f http://localhost:8000/health; then
+            HEALTH_OK=false
+            for i in {1..12}; do
+              if curl -f http://localhost:8000/health; then
+                HEALTH_OK=true
+                break
+              fi
+              echo "Waiting for service to start..."
+              sleep 5
+            done
+
+            if [ "$HEALTH_OK" = false ]; then
               echo "Health check FAILED for version $MODEL_VERSION"
               sudo journalctl -u mlops-serve -n 50 --no-pager
 

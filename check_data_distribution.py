@@ -15,7 +15,7 @@ import os
 import sys
 import pandas as pd
 
-DATA_PATH = "data/train.csv"       # TODO: doi thanh duong dan that
+DATA_PATH = "data/train_phase1.csv"       # Da doi thanh duong dan that
 TARGET_COLUMN = "target"           # TODO: doi thanh ten cot nhan that
 EXPECTED_CLASSES = [0, 1, 2]
 MIN_CLASS_RATIO = 0.10             # nguong 10%

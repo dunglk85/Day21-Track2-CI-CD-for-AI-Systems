@@ -22,7 +22,7 @@ from sklearn.metrics import (
 )
 
 MODEL_PATH = "models/model.pkl"     # TODO: doi neu train.py luu model o duong dan khac
-TEST_DATA_PATH = "data/test.csv"    # TODO: doi thanh duong dan test set that
+TEST_DATA_PATH = "data/eval.csv"    # Da doi thanh duong dan test set that
 TARGET_COLUMN = "target"            # TODO: doi thanh ten cot nhan that
 CLASSES = [0, 1, 2]
 

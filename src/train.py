@@ -13,7 +13,9 @@ from scipy.stats import ks_2samp
 
 load_dotenv()  # Tai cac bien moi truong tu file .env
 
-EVAL_THRESHOLD = 0.70
+def get_eval_threshold(params):
+    return params.get("eval_threshold", 0.70)
+
 
 
 def train(
@@ -43,15 +45,26 @@ def train(
     y_eval = df_eval["target"]
 
     # 2. Dinh nghia danh sach cac model muon thu nghiem
+    rf_params = params.get("random_forest", {})
+    gb_params = params.get("gradient_boosting", {})
+    lr_params = params.get("logistic_regression", {})
+
     models_to_try = {
-        "random_forest": RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42),
-        "gradient_boosting": GradientBoostingClassifier(
-            n_estimators=params.get("n_estimators", 100), 
-            max_depth=params.get("max_depth", 5), 
-            learning_rate=params.get("learning_rate", 0.1),
+        "random_forest": RandomForestClassifier(
+            n_estimators=rf_params.get("n_estimators", 100), 
+            max_depth=rf_params.get("max_depth", 10), 
             random_state=42
         ),
-        "logistic_regression": LogisticRegression(max_iter=1000, random_state=42)
+        "gradient_boosting": GradientBoostingClassifier(
+            n_estimators=gb_params.get("n_estimators", 100), 
+            max_depth=gb_params.get("max_depth", 5), 
+            learning_rate=gb_params.get("learning_rate", 0.1),
+            random_state=42
+        ),
+        "logistic_regression": LogisticRegression(
+            max_iter=lr_params.get("max_iter", 1000), 
+            random_state=42
+        )
     }
 
     best_acc = -1
@@ -83,6 +96,7 @@ def train(
                 best_model = model
                 best_model_name = name
                 best_metrics = {"accuracy": acc, "f1_score": f1}
+                best_run_id = mlflow.active_run().info.run_id
 
     print(f"\n===> KET QUA: '{best_model_name}' la model tot nhat voi Accuracy: {best_acc:.4f}")
 
@@ -92,55 +106,13 @@ def train(
     with open("outputs/metrics.json", "w") as f:
         json.dump(best_metrics, f)
 
-    # --- MO RONG: Tao bao cao chi tiet (Bonus 3) ---
-    best_preds = best_model.predict(X_eval)
-    report = classification_report(y_eval, best_preds)
-    matrix = confusion_matrix(y_eval, best_preds)
-    
-    with open("outputs/report.txt", "w") as f:
-        f.write("=== KET QUA HUAN LUYEN CHI TIET ===\n")
-        f.write(f"Best Model: {best_model_name}\n")
-        f.write(f"Accuracy: {best_acc:.4f}\n\n")
-        f.write("--- Classification Report ---\n")
-        f.write(report)
-        f.write("\n--- Confusion Matrix ---\n")
-        f.write(str(matrix))
-    
-    print(f"Da tao bao cao chi tiet tai: outputs/report.txt")
-    # ---------------------------------------------
-
     # Luu model binary
     os.makedirs("models", exist_ok=True)
     joblib.dump(best_model, "models/model.pkl")
     
-    # --- MO RONG: Kiem tra Data Drift (Bonus 5) ---
-    drift_report = []
-    # Chia doi tap train de so sanh Phase 1 va Phase 2
-    mid_point = len(df_train) // 2
-    df_p1 = df_train.iloc[:mid_point]
-    df_p2 = df_train.iloc[mid_point:]
-    
-    for col in X_train.columns:
-        stat, p_value = ks_2samp(df_p1[col], df_p2[col])
-        if p_value < 0.05:
-            drift_report.append(f"Cảnh báo: Phát hiện Drift tại cột '{col}' (p-value: {p_value:.4f})")
-    
-    with open("outputs/report.txt", "a") as f:
-        f.write("\n--- Data Drift Analysis ---\n")
-        if not drift_report:
-            f.write("Khong phat hien lech lac du lieu dang ke.\n")
-        else:
-            for line in drift_report:
-                f.write(line + "\n")
-                print(line)
-    # ---------------------------------------------
-
-    # Log model tot nhat vao mot run tong hop
-    with mlflow.start_run(run_name=f"Best Model: {best_model_name}"):
-        mlflow.log_param("best_algorithm", best_model_name)
-        if drift_report:
-            mlflow.log_param("data_drift_detected", "True")
-        mlflow.log_metrics(best_metrics)
+    # Ghi nhan model tot nhat vao dung run cua no
+    with mlflow.start_run(run_id=best_run_id):
+        mlflow.set_tag("is_best_model", "true")
         mlflow.sklearn.log_model(best_model, "best_model")
 
     return best_acc
