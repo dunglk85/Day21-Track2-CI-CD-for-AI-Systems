@@ -24,13 +24,52 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
-  # JOB 2: Huan luyen mo hinh, upload artifact len cloud storage
+  # JOB 2: Kiem tra chat luong du lieu bang Great Expectations
+  # Chay TRUOC train de chan som du lieu loi, tranh lang phi compute train
+  validate_data:
+    name: Validate Data
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install great_expectations
+
+      - name: Authenticate to Cloud Storage
+        run: |
+          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+      - name: Pull data with DVC
+        run: |
+          dvc remote modify myremote credentialpath /tmp/sa-key.json
+          dvc pull
+
+      - name: Run Great Expectations validation
+        run: python src/validate_data.py
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-validation-report
+          path: gx/uncommitted/
+
+  # JOB 3: Huan luyen mo hinh, upload artifact len cloud storage
   train:
     name: Train
-    needs: test
+    needs: validate_data
     runs-on: ubuntu-latest
     outputs:
       accuracy: ${{ steps.read_metrics.outputs.accuracy }}
+      model_version: ${{ steps.version.outputs.model_version }}
     env:
       MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
       MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
@@ -44,7 +83,9 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install scikit-learn joblib
 
       - name: Authenticate to Cloud Storage
         run: |
@@ -56,8 +97,17 @@ jobs:
           dvc remote modify myremote credentialpath /tmp/sa-key.json
           dvc pull
 
+      # Bonus 5: Canh bao lech lac du lieu - chay TRUOC khi train
+      - name: Check data distribution (imbalance warning)
+        run: python src/check_data_distribution.py
+
       - name: Train model
         run: python src/train.py
+
+      # Bonus 3 + 5: Tao confusion matrix, precision/recall theo lop,
+      # va gop phan phoi nhan (tu buoc tren) vao outputs/metrics.json
+      - name: Generate performance report
+        run: python src/generate_report.py
 
       - name: Read metrics
         id: read_metrics
@@ -65,21 +115,38 @@ jobs:
           acc=$(python -c "import json; print(json.load(open('outputs/metrics.json'))['accuracy'])")
           echo "accuracy=$acc" >> $GITHUB_OUTPUT
 
+      # Tao version id duy nhat cho lan train nay, dung de truy vet va rollback sau nay
+      - name: Generate model version tag
+        id: version
+        run: |
+          version="$(date +%Y%m%d%H%M%S)-${GITHUB_SHA::8}"
+          echo "model_version=$version" >> $GITHUB_OUTPUT
+          echo "Model version: $version"
+
+      # Upload model theo 2 duong dan: 1 ban co version rieng (immutable, dung de rollback)
+      # va 1 ban "latest" (mutable, VM se pull ban nay khi deploy)
       - name: Upload model to Cloud Storage
         run: |
-          python - <<'EOF'
+          python - <<EOF
           import os
           from google.cloud import storage
-          
+
           bucket_name = "${{ secrets.CLOUD_BUCKET }}"
           source_file = "models/model.pkl"
-          destination_blob = "models/latest/model.pkl"
-          
+          version = "${{ steps.version.outputs.model_version }}"
+
           client = storage.Client()
           bucket = client.bucket(bucket_name)
-          blob = bucket.blob(destination_blob)
-          blob.upload_from_filename(source_file)
-          print(f"Uploaded {source_file} to {destination_blob}")
+
+          # Ban immutable theo version - khong bao gio bi ghi de, dung de rollback
+          versioned_blob = bucket.blob(f"models/versions/{version}/model.pkl")
+          versioned_blob.upload_from_filename(source_file)
+          print(f"Uploaded {source_file} to models/versions/{version}/model.pkl")
+
+          # Ban "latest" - VM se pull ban nay
+          latest_blob = bucket.blob("models/latest/model.pkl")
+          latest_blob.upload_from_filename(source_file)
+          print(f"Uploaded {source_file} to models/latest/model.pkl")
           EOF
 
       - name: Save metrics as artifact
@@ -93,7 +160,8 @@ jobs:
       - name: Display Performance Report
         run: cat outputs/report.txt
 
-  # JOB 3: Kiem tra chat luong - chi cho phep deploy khi accuracy >= 0.70
+  # JOB 4: Kiem tra chat luong - chi cho phep deploy khi accuracy >= 0.70
+  # VA khi model moi (challenger) tot hon hoac bang model dang chay san xuat (champion)
   eval:
     name: Eval
     needs: train
@@ -102,88 +170,218 @@ jobs:
       MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
       MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+      CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-      
-      - name: Install MLflow for comparison
-        run: pip install mlflow
 
-      - name: Check safety gate (Comparison with Prod)
+      - name: Install dependencies
+        run: pip install mlflow google-cloud-storage
+
+      # Can lai file metrics.json vua duoc tao trong job "train"
+      - name: Download metrics artifact from train job
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-reports
+          path: outputs/
+
+      - name: Authenticate to Cloud Storage
+        run: |
+          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+      # Bonus 4: Tai metrics.json cua ban production hien tai tu Cloud Storage,
+      # so sanh accuracy moi vs cu. Chi cho deploy neu accuracy moi >= cu.
+      - name: Compare with current production model (rollback safety gate)
+        run: python src/compare_with_production.py
+
+      - name: Check safety gate (Champion vs Challenger)
         run: |
           python - <<'EOF'
           import sys
           import mlflow
           import os
-          
+
           current_acc = float("${{ needs.train.outputs.accuracy }}")
           threshold = 0.7
-          
-          print(f"New Model Accuracy: {current_acc}")
-          
-          # 1. Kiem tra nguong cung
+
+          print(f"Challenger (New Model) Accuracy: {current_acc}")
+
+          # 1. Nguong cung: du challenger co thang champion, van phai dat toi thieu
           if current_acc < threshold:
               print(f"FAILED: Accuracy {current_acc} is below global threshold {threshold}")
               sys.exit(1)
-          
-          # 2. So sanh voi mo hinh cu tren DagsHub
+
+          # 2. So sanh voi champion hien tai
+          # Uu tien dung Model Registry alias '@champion' neu co, vi day la nguon
+          # tin cay chinh xac hon la suy doan theo start_time cua cac run.
           try:
-              mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
+              mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
               client = mlflow.tracking.MlflowClient()
-              
-              # Tim experiment Default (id '0')
-              experiment_id = "0" 
-              runs = client.search_runs(
-                  experiment_ids=[experiment_id],
-                  filter_string="status = 'FINISHED'",
-                  max_results=10,
-                  order_by=["start_time DESC"]
-              )
-              
-              # Tim accuracy cua lan chay thanh cong truoc do (bo qua lan chay hien tai)
-              # Gia dinh lan chay hien tai la runs[0]
-              prev_acc = 0.0
-              if len(runs) > 1:
-                  for run in runs[1:]:
-                      if "accuracy" in run.data.metrics:
-                          prev_acc = run.data.metrics["accuracy"]
-                          print(f"Current Production Accuracy: {prev_acc}")
-                          break
-              
-              if current_acc < prev_acc:
-                  print(f"FAILED: New model ({current_acc}) is WORSE than production ({prev_acc}). Rollback triggered!")
+
+              prev_acc = None
+              model_name = "mlops-model"  # doi lai dung ten model da dang ky trong Registry
+
+              try:
+                  champion_version = client.get_model_version_by_alias(model_name, "champion")
+                  champion_run = client.get_run(champion_version.run_id)
+                  prev_acc = champion_run.data.metrics.get("accuracy")
+                  print(f"Champion (Registry alias) Accuracy: {prev_acc}")
+              except Exception:
+                  # Fallback: registry chua co alias 'champion' duoc thiet lap.
+                  # Suy doan tu run gan nhat (kem chinh xac hon, chi dung khi thieu registry).
+                  print("No '@champion' alias found in Registry, falling back to run history.")
+                  runs = client.search_runs(
+                      experiment_ids=["0"],
+                      filter_string="status = 'FINISHED'",
+                      max_results=10,
+                      order_by=["start_time DESC"],
+                  )
+                  if len(runs) > 1:
+                      for run in runs[1:]:
+                          if "accuracy" in run.data.metrics:
+                              prev_acc = run.data.metrics["accuracy"]
+                              print(f"Champion (fallback) Accuracy: {prev_acc}")
+                              break
+
+              if prev_acc is None:
+                  print("No previous champion found. Treating current model as first champion.")
+              elif current_acc < prev_acc:
+                  print(f"FAILED: Challenger ({current_acc}) is WORSE than champion ({prev_acc}).")
                   sys.exit(1)
-              
-              print(f"PASSED: New model is better or equal to production.")
-              
+              else:
+                  print("PASSED: Challenger is better than or equal to champion.")
+
           except Exception as e:
-              print(f"Warning: Could not fetch previous metrics from MLflow: {e}")
-              print("Proceeding with global threshold check only.")
+              # Loi ket noi MLflow KHONG duoc phep am tham bo qua buoc so sanh.
+              # Fail cung o day de tranh deploy nham mot model chua duoc kiem chung day du.
+              print(f"ERROR: Could not verify against champion model: {e}")
+              sys.exit(1)
           EOF
 
-  # JOB 4: Trien khai sau khi eval gate qua
+  # JOB 5: Trien khai sau khi eval gate qua
+  # Co pull model moi ve VM, backup ban dang chay, va tu dong rollback neu health check fail
   deploy:
     name: Deploy
-    needs: eval
+    needs: [train, eval]
     runs-on: ubuntu-latest
+    env:
+      MODEL_VERSION: ${{ needs.train.outputs.model_version }}
     steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # Can lai metrics.json de dung cho buoc cap nhat production baseline ben duoi
+      - name: Download metrics artifact from train job
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-reports
+          path: outputs/
+
       - name: Deploy to VM via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
+          envs: MODEL_VERSION
           script: |
-            # Di chuyen vao thu muc project (neu co) hoac dam bao moi truong
-            # Cai dat/Cap nhat dependencies de tranh loi thieu thu vien
-            pip install --user -r requirements.txt || echo "Warning: pip install failed"
-            
-            # Restart service
+            set -e
+
+            APP_DIR="/opt/mlops-serve"
+            MODEL_DIR="$APP_DIR/models"
+            LATEST_LINK="$MODEL_DIR/current"
+            NEW_MODEL_DIR="$MODEL_DIR/$MODEL_VERSION"
+
+            cd "$APP_DIR"
+
+            # 1. Ghi lai version dang chay de co the rollback neu can
+            PREV_VERSION=""
+            if [ -L "$LATEST_LINK" ]; then
+              PREV_VERSION=$(basename "$(readlink -f "$LATEST_LINK")")
+              echo "Current running version: $PREV_VERSION"
+            fi
+
+            # 2. Cai dependencies - fail cung neu loi, khong am tham bo qua
+            pip install --user -r requirements.txt
+
+            # 3. Tai model moi ve VM (ban immutable theo version, khong phai 'latest')
+            mkdir -p "$NEW_MODEL_DIR"
+            gsutil cp "gs://${{ secrets.CLOUD_BUCKET }}/models/versions/$MODEL_VERSION/model.pkl" \
+              "$NEW_MODEL_DIR/model.pkl"
+
+            # 4. Chuyen symlink 'current' sang version moi (atomic switch)
+            ln -sfn "$NEW_MODEL_DIR" "$LATEST_LINK"
+
+            # 5. Restart service de load model moi
             sudo systemctl restart mlops-serve
-            
-            # Doi server khoi dong (tang len 10s vi phai tai mo hinh tu GCS)
             sleep 10
-            
-            # Kiem tra health check, neu loi thi in log ra de debug
-            curl -f http://localhost:8000/health || (sudo journalctl -u mlops-serve -n 50 --no-pager && exit 1)
+
+            # 6. Health check - neu fail thi tu dong rollback ve version cu
+            if ! curl -f http://localhost:8000/health; then
+              echo "Health check FAILED for version $MODEL_VERSION"
+              sudo journalctl -u mlops-serve -n 50 --no-pager
+
+              if [ -n "$PREV_VERSION" ]; then
+                echo "Rolling back to previous version: $PREV_VERSION"
+                ln -sfn "$MODEL_DIR/$PREV_VERSION" "$LATEST_LINK"
+                sudo systemctl restart mlops-serve
+                sleep 10
+                if curl -f http://localhost:8000/health; then
+                  echo "Rollback successful. Service running on $PREV_VERSION."
+                else
+                  echo "CRITICAL: Rollback also failed. Manual intervention required."
+                fi
+              else
+                echo "No previous version available to roll back to."
+              fi
+
+              exit 1
+            fi
+
+            echo "Deploy successful. Service running on version $MODEL_VERSION."
+
+      # Cap nhat baseline "production" tren Cloud Storage sau khi deploy THANH CONG.
+      # Lan chay sau se dung chinh file nay lam moc so sanh trong Bonus 4.
+      - name: Update production baseline (model + metrics)
+        env:
+          CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
+        run: |
+          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+          pip install google-cloud-storage
+          python - <<EOF
+          from google.cloud import storage
+
+          bucket_name = "${{ secrets.CLOUD_BUCKET }}"
+          client = storage.Client()
+          bucket = client.bucket(bucket_name)
+
+          version = "${{ needs.train.outputs.model_version }}"
+          model_blob = bucket.blob(f"models/versions/{version}/model.pkl")
+          bucket.copy_blob(model_blob, bucket, "production/model.pkl")
+
+          metrics_blob = bucket.blob("production/metrics.json")
+          metrics_blob.upload_from_filename("outputs/metrics.json")
+
+          print(f"Production baseline updated to version {version}")
+          EOF
+
+      # (Tuy chon) Danh dau model nay la champion trong MLflow Registry sau khi deploy thanh cong.
+      # Bo comment va dieu chinh model_name / run_id logic neu ban da dang ky model qua Registry.
+      # - name: Promote to champion in MLflow Registry
+      #   env:
+      #     MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USERNAME }}/Day21-Track2-CI-CD-for-AI-Systems.mlflow
+      #     MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+      #     MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+      #   run: |
+      #     pip install mlflow
+      #     python -c "
+      #     import mlflow
+      #     client = mlflow.tracking.MlflowClient()
+      #     client.set_registered_model_alias('mlops-model', 'champion', '<model_version_number>')
+      #     "
